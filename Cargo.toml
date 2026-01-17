@@ -4,7 +4,7 @@
 
 [package]
 name = "openworkers-serde-v8"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
@@ -21,6 +21,9 @@ v8 = { package = "openworkers-v8", version = "142.2.2" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
+
+# Zero-copy buffer support
+bytes = "1"
 
 # BigInt support
 num-bigint = "0.4"

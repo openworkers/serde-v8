@@ -102,6 +102,15 @@ impl From<Vec<u8>> for ToJsBuffer {
     }
 }
 
+impl From<bytes::Bytes> for ToJsBuffer {
+    /// Convert Bytes to ToJsBuffer, potentially avoiding a copy if Bytes is uniquely owned.
+    fn from(bytes: bytes::Bytes) -> Self {
+        // bytes.into() -> Vec<u8> avoids copy if Bytes owns the data exclusively
+        let vec: Vec<u8> = bytes.into();
+        vec.into_boxed_slice().into()
+    }
+}
+
 impl ToV8 for ToJsBuffer {
     fn to_v8<'scope, 'i>(
         &self,
