@@ -55,6 +55,30 @@ where
     Ok(t)
 }
 
+/// Deserialize from V8 with relaxed lifetime constraints.
+///
+/// This is useful in V8 callbacks where the scope and value have different
+/// static lifetimes but are both valid for the duration of the callback.
+///
+/// # Safety
+/// The caller must ensure that both `scope` and `input` remain valid for
+/// the duration of this call. This is always true inside V8 callbacks.
+pub fn from_v8_any<'de, T>(scope: &mut v8::PinScope, input: v8::Local<v8::Value>) -> Result<T>
+where
+    T: Deserialize<'de>,
+{
+    // Safety: In a V8 callback, both scope and values are valid for the
+    // callback's duration. The lifetime mismatch is an artifact of how
+    // V8 exposes callback arguments vs scope.
+    unsafe {
+        let scope: &mut v8::PinScope<'_, '_> = std::mem::transmute(scope);
+        let input: v8::Local<'_, v8::Value> = std::mem::transmute(input);
+        let mut deserializer = Deserializer::new(scope, input, None);
+        let t = T::deserialize(&mut deserializer)?;
+        Ok(t)
+    }
+}
+
 // like from_v8 except accepts a KeyCache to optimize struct key decoding
 pub fn from_v8_cached<'de, 'b, 's, 'i, T>(
     scope: &'b mut v8::PinScope<'s, 'i>,

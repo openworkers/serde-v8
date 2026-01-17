@@ -9,6 +9,7 @@ mod ser;
 
 pub use de::Deserializer;
 pub use de::from_v8;
+pub use de::from_v8_any;
 pub use de::from_v8_cached;
 pub use de::to_utf8;
 pub use error::Error;

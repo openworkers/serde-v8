@@ -222,28 +222,24 @@ fn de_obj_with_numeric_keys() {
 #[test]
 fn de_string_or_buffer() {
     dedo("'hello'", |scope, v| {
-        let sob: serde_v8::StringOrBuffer =
-            serde_v8::from_v8(scope, v).unwrap();
+        let sob: serde_v8::StringOrBuffer = serde_v8::from_v8(scope, v).unwrap();
         assert_eq!(sob.as_ref(), &[0x68, 0x65, 0x6C, 0x6C, 0x6F]);
     });
 
     dedo("new Uint8Array([97])", |scope, v| {
-        let sob: serde_v8::StringOrBuffer =
-            serde_v8::from_v8(scope, v).unwrap();
+        let sob: serde_v8::StringOrBuffer = serde_v8::from_v8(scope, v).unwrap();
         assert_eq!(sob.as_ref(), &[97]);
     });
 
     dedo("new Uint8Array([128])", |scope, v| {
-        let sob: serde_v8::StringOrBuffer =
-            serde_v8::from_v8(scope, v).unwrap();
+        let sob: serde_v8::StringOrBuffer = serde_v8::from_v8(scope, v).unwrap();
         assert_eq!(sob.as_ref(), &[128]);
     });
 
     dedo(
         "(Uint8Array.from([0x68, 0x65, 0x6C, 0x6C, 0x6F]))",
         |scope, v| {
-            let sob: serde_v8::StringOrBuffer =
-                serde_v8::from_v8(scope, v).unwrap();
+            let sob: serde_v8::StringOrBuffer = serde_v8::from_v8(scope, v).unwrap();
             assert_eq!(sob.as_ref(), &[0x68, 0x65, 0x6C, 0x6C, 0x6F]);
         },
     );

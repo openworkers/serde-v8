@@ -55,29 +55,24 @@ fn magic_buffer() {
 
         // Simple buffer
         let v8_array = js_exec(scope, "new Uint8Array([1,2,3,4,5])");
-        let zbuf: serde_v8::JsBuffer =
-            serde_v8::from_v8(scope, v8_array).unwrap();
+        let zbuf: serde_v8::JsBuffer = serde_v8::from_v8(scope, v8_array).unwrap();
         assert_eq!(&*zbuf, &[1, 2, 3, 4, 5]);
 
         // Multi buffers
         let v8_arrays = js_exec(scope, "[new Uint8Array([1,2]), new Uint8Array([3,4,5])]");
-        let (z1, z2): (
-            serde_v8::JsBuffer,
-            serde_v8::JsBuffer,
-        ) = serde_v8::from_v8(scope, v8_arrays).unwrap();
+        let (z1, z2): (serde_v8::JsBuffer, serde_v8::JsBuffer) =
+            serde_v8::from_v8(scope, v8_arrays).unwrap();
         assert_eq!(&*z1, &[1, 2]);
         assert_eq!(&*z2, &[3, 4, 5]);
 
         // Wrapped in option, like our current op-ABI
         let v8_array = js_exec(scope, "new Uint8Array([1,2,3,4,5])");
-        let zbuf: Option<serde_v8::JsBuffer> =
-            serde_v8::from_v8(scope, v8_array).unwrap();
+        let zbuf: Option<serde_v8::JsBuffer> = serde_v8::from_v8(scope, v8_array).unwrap();
         assert_eq!(&*zbuf.unwrap(), &[1, 2, 3, 4, 5]);
 
         // Observe mutation in JS
         let v8_array = js_exec(scope, "new Uint8Array([1,2,3,4,5])");
-        let mut zbuf: serde_v8::JsBuffer =
-            serde_v8::from_v8(scope, v8_array).unwrap();
+        let mut zbuf: serde_v8::JsBuffer = serde_v8::from_v8(scope, v8_array).unwrap();
         let key = serde_v8::to_v8(scope, "t1").unwrap();
         global.set(scope, key, v8_array);
         (&mut *zbuf)[2] = 42;
@@ -86,8 +81,7 @@ fn magic_buffer() {
 
         // Shared buffers
         let v8_array = js_exec(scope, "new Uint8Array(new SharedArrayBuffer([1,2,3,4,5]))");
-        let zbuf: Result<serde_v8::JsBuffer> =
-            serde_v8::from_v8(scope, v8_array);
+        let zbuf: Result<serde_v8::JsBuffer> = serde_v8::from_v8(scope, v8_array);
         assert!(zbuf.is_err());
 
         // Serialization
@@ -133,8 +127,7 @@ fn magic_byte_string() {
 
         // JS string to ByteString
         let v8_string = js_exec(scope, "'test \\0\\t\\n\\r\\x7F\\x80áþÆñ'");
-        let rust_reflex: serde_v8::ByteString =
-            serde_v8::from_v8(scope, v8_string).unwrap();
+        let rust_reflex: serde_v8::ByteString = serde_v8::from_v8(scope, v8_string).unwrap();
         assert_eq!(
             rust_reflex.as_slice(),
             b"test \0\t\n\r\x7F\x80\xE1\xFE\xC6\xF1"
@@ -142,14 +135,12 @@ fn magic_byte_string() {
 
         // Non-Latin-1 characters
         let v8_string = js_exec(scope, "'日本語'");
-        let rust_reflex: Result<serde_v8::ByteString> =
-            serde_v8::from_v8(scope, v8_string);
+        let rust_reflex: Result<serde_v8::ByteString> = serde_v8::from_v8(scope, v8_string);
         assert!(rust_reflex.is_err());
 
         // Windows-1252 characters that aren't Latin-1
         let v8_string = js_exec(scope, "'œ'");
-        let rust_reflex: Result<serde_v8::ByteString> =
-            serde_v8::from_v8(scope, v8_string);
+        let rust_reflex: Result<serde_v8::ByteString> = serde_v8::from_v8(scope, v8_string);
         assert!(rust_reflex.is_err());
 
         // ByteString to JS string
