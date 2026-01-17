@@ -1,0 +1,14 @@
+# Test utilities for serde_v8
+# Original: Deno authors 2018-2025, MIT license
+
+[package]
+name = "serde_v8_utilities"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+v8 = { package = "openworkers-v8", version = "142.2.2" }

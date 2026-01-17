@@ -1,0 +1,41 @@
+# Fork of serde_v8 from Deno, adapted for openworkers-v8
+# Original: https://github.com/denoland/deno_core/tree/main/serde_v8
+# Original license: MIT (Deno authors 2018-2025)
+
+[package]
+name = "openworkers-serde-v8"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/openworkers/serde-v8"
+description = "Rust to V8 serialization and deserialization for OpenWorkers"
+
+[lib]
+name = "serde_v8"
+path = "lib.rs"
+
+[dependencies]
+# V8 JavaScript engine (openworkers fork with UnenteredIsolate + Locker)
+v8 = { package = "openworkers-v8", version = "142.2.2" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+
+# BigInt support
+num-bigint = "0.4"
+
+# Small vector optimization
+smallvec = { version = "1.14", features = ["union"] }
+
+# Error handling
+thiserror = "2"
+
+[dev-dependencies]
+bencher = "0.1"
+serde_bytes = "0.11"
+serde_json = "1.0"
+serde_v8_utilities = { path = "./utilities" }
+
+[[example]]
+name = "basic"
