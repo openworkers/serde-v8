@@ -4,7 +4,7 @@
 
 [package]
 name = "openworkers-serde-v8"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
@@ -14,6 +14,10 @@ description = "Rust to V8 serialization and deserialization for OpenWorkers"
 [lib]
 name = "serde_v8"
 path = "lib.rs"
+
+[features]
+default = []
+v8_enable_sandbox = ["v8/v8_enable_sandbox"]
 
 [dependencies]
 # V8 JavaScript engine (openworkers fork with UnenteredIsolate + Locker)

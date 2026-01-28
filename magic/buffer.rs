@@ -124,10 +124,32 @@ impl ToV8 for ToJsBuffer {
                 .expect("Failed to create Uint8Array")
                 .into());
         }
+
         let buf_len: usize = buf.len();
-        let backing_store = v8::ArrayBuffer::new_backing_store_from_boxed_slice(buf);
-        let backing_store_shared = backing_store.make_shared();
-        let ab = v8::ArrayBuffer::with_backing_store(scope, &backing_store_shared);
+
+        // In sandbox mode, V8 must allocate memory itself (security restriction).
+        // We create an ArrayBuffer and copy data into it.
+        #[cfg(feature = "v8_enable_sandbox")]
+        let ab = {
+            let ab = v8::ArrayBuffer::new(scope, buf_len);
+            let bs = ab.get_backing_store();
+            // SAFETY: We just created this ArrayBuffer, so we have exclusive access.
+            // The backing store data is valid for the lifetime of the ArrayBuffer.
+            let data = bs.data().unwrap().as_ptr() as *mut u8;
+            unsafe {
+                std::ptr::copy_nonoverlapping(buf.as_ptr(), data, buf_len);
+            }
+            ab
+        };
+
+        // In non-sandbox mode, we can create a backing store from Rust memory directly.
+        #[cfg(not(feature = "v8_enable_sandbox"))]
+        let ab = {
+            let backing_store = v8::ArrayBuffer::new_backing_store_from_boxed_slice(buf);
+            let backing_store_shared = backing_store.make_shared();
+            v8::ArrayBuffer::with_backing_store(scope, &backing_store_shared)
+        };
+
         Ok(v8::Uint8Array::new(scope, ab, 0, buf_len)
             .expect("Failed to create Uint8Array")
             .into())
