@@ -1,10 +1,11 @@
-# Fork of serde_v8 from Deno, adapted for openworkers-v8
+# Fork of serde_v8 from Deno, kept because upstream now routes through the
+# deno_v8 facade and deno_error, which we do not want.
 # Original: https://github.com/denoland/deno_core/tree/main/serde_v8
 # Original license: MIT (Deno authors 2018-2025)
 
 [package]
 name = "openworkers-serde-v8"
-version = "146.0.0"
+version = "152.0.0"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
@@ -20,8 +21,7 @@ default = []
 v8_enable_sandbox = ["v8/v8_enable_sandbox"]
 
 [dependencies]
-# V8 JavaScript engine (openworkers fork with UnenteredIsolate + Locker)
-v8 = { package = "openworkers-v8", version = "146" }
+v8 = "152"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
