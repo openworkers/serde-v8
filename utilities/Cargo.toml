@@ -11,4 +11,4 @@ publish = false
 path = "lib.rs"
 
 [dependencies]
-v8 = { package = "openworkers-v8", version = "145" }
+v8 = { package = "openworkers-v8", version = "152.2" }
