@@ -21,7 +21,7 @@ default = []
 v8_enable_sandbox = ["v8/v8_enable_sandbox"]
 
 [dependencies]
-v8 = "152"
+v8 = { package = "openworkers-v8", version = "152.2" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
