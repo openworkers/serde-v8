@@ -22,10 +22,17 @@ use crate::magic::transl8::MagicType;
 use crate::magic::transl8::visit_magic;
 use crate::payload::ValueType;
 
+/// How many containers a value can sit in. A cycle, or a chain built to be deep,
+/// ends here with an error instead of overflowing the stack. serde_json stops
+/// at the same depth.
+const MAX_DEPTH: u32 = 128;
+
 pub struct Deserializer<'b, 's, 'i> {
     input: v8::Local<'s, v8::Value>,
     scope: &'b mut v8::PinScope<'s, 'i>,
     _key_cache: Option<&'b mut KeyCache>,
+    /// How many containers hold `input`
+    depth: u32,
 }
 
 impl<'b, 's, 'i> Deserializer<'b, 's, 'i> {
@@ -38,7 +45,33 @@ impl<'b, 's, 'i> Deserializer<'b, 's, 'i> {
             input,
             scope,
             _key_cache: key_cache,
+            depth: 0,
         }
+    }
+
+    /// A deserializer for a value inside a container: `depth` counts that container
+    fn inside(
+        scope: &'b mut v8::PinScope<'s, 'i>,
+        input: v8::Local<'s, v8::Value>,
+        depth: u32,
+    ) -> Self {
+        Deserializer {
+            input,
+            scope,
+            _key_cache: None,
+            depth,
+        }
+    }
+
+    /// The depth of the values `input` holds, or an error past the limit
+    fn enter(&self) -> Result<u32> {
+        let depth = self.depth + 1;
+
+        if depth > MAX_DEPTH {
+            return Err(Error::DepthLimit(MAX_DEPTH));
+        }
+
+        Ok(depth)
     }
 }
 
@@ -271,9 +304,15 @@ impl<'de> de::Deserializer<'de> for &'_ mut Deserializer<'_, '_, '_> {
     where
         V: Visitor<'de>,
     {
+        let depth = self.enter()?;
         let arr = v8::Local::<v8::Array>::try_from(self.input)
             .map_err(|_| Error::ExpectedArray(self.input.type_repr()))?;
-        visitor.visit_seq(SeqAccess::new(arr.into(), self.scope, 0..arr.length()))
+        visitor.visit_seq(SeqAccess::new(
+            arr.into(),
+            self.scope,
+            0..arr.length(),
+            depth,
+        ))
     }
 
     // Like deserialize_seq except it prefers tuple's length over input array's length
@@ -281,6 +320,7 @@ impl<'de> de::Deserializer<'de> for &'_ mut Deserializer<'_, '_, '_> {
     where
         V: Visitor<'de>,
     {
+        let depth = self.enter()?;
         let obj = v8::Local::<v8::Object>::try_from(self.input)
             .map_err(|_| Error::ExpectedObject(self.input.type_repr()))?;
         if let Ok(array) = v8::Local::<v8::Array>::try_from(obj) {
@@ -290,7 +330,7 @@ impl<'de> de::Deserializer<'de> for &'_ mut Deserializer<'_, '_, '_> {
                 return Err(Error::LengthMismatch(array_len, len));
             }
         }
-        visitor.visit_seq(SeqAccess::new(obj, self.scope, 0..len as u32))
+        visitor.visit_seq(SeqAccess::new(obj, self.scope, 0..len as u32, depth))
     }
 
     // Tuple structs look just like sequences in JSON.
@@ -310,6 +350,8 @@ impl<'de> de::Deserializer<'de> for &'_ mut Deserializer<'_, '_, '_> {
     where
         V: de::Visitor<'de>,
     {
+        let depth = self.enter()?;
+
         // Assume object, then get_own_property_names
         let obj = v8::Local::<v8::Object>::try_from(self.input)
             .map_err(|_| Error::ExpectedObject(self.input.type_repr()))?;
@@ -321,10 +363,11 @@ impl<'de> de::Deserializer<'de> for &'_ mut Deserializer<'_, '_, '_> {
                 len: pairs_array.length(),
                 obj: pairs_array,
                 scope: self.scope,
+                depth,
             };
             visitor.visit_map(map)
         } else {
-            visitor.visit_map(MapObjectAccess::new(obj, self.scope))
+            visitor.visit_map(MapObjectAccess::new(obj, self.scope, depth))
         }
     }
 
@@ -366,18 +409,20 @@ impl<'de> de::Deserializer<'de> for &'_ mut Deserializer<'_, '_, '_> {
             }
             _ => {
                 // Regular struct
+                let depth = self.enter()?;
                 let obj = v8::Local::<v8::Object>::try_from(self.input)
                     .map_err(|_| Error::ExpectedObject(self.input.type_repr()))?;
 
                 // Fields names are a hint and must be inferred when not provided
                 if fields.is_empty() {
-                    visitor.visit_map(MapObjectAccess::new(obj, self.scope))
+                    visitor.visit_map(MapObjectAccess::new(obj, self.scope, depth))
                 } else {
                     visitor.visit_map(StructAccess {
                         obj,
                         scope: self.scope,
                         keys: fields.iter(),
                         next_value: None,
+                        depth,
                     })
                 }
             }
@@ -396,6 +441,8 @@ impl<'de> de::Deserializer<'de> for &'_ mut Deserializer<'_, '_, '_> {
     where
         V: Visitor<'de>,
     {
+        let depth = self.enter()?;
+
         // Unit variant
         if self.input.is_string() || self.input.is_string_object() {
             let payload = v8::undefined(self.scope).into();
@@ -403,6 +450,7 @@ impl<'de> de::Deserializer<'de> for &'_ mut Deserializer<'_, '_, '_> {
                 scope: self.scope,
                 tag: self.input,
                 payload,
+                depth,
             })
         }
         // Struct or tuple variant
@@ -426,6 +474,7 @@ impl<'de> de::Deserializer<'de> for &'_ mut Deserializer<'_, '_, '_> {
                 scope: self.scope,
                 tag,
                 payload,
+                depth,
             })
         } else {
             Err(Error::ExpectedEnum(self.input.type_repr()))
@@ -471,24 +520,30 @@ struct MapObjectAccess<'a, 's, 'i> {
     obj: v8::Local<'a, v8::Object>,
     keys: SeqAccess<'a, 's, 'i>,
     next_value: Option<v8::Local<'s, v8::Value>>,
+    depth: u32,
 }
 
 impl<'a, 's, 'i> MapObjectAccess<'a, 's, 'i> {
-    pub fn new(obj: v8::Local<'a, v8::Object>, scope: &'a mut v8::PinScope<'s, 'i>) -> Self {
+    pub fn new(
+        obj: v8::Local<'a, v8::Object>,
+        scope: &'a mut v8::PinScope<'s, 'i>,
+        depth: u32,
+    ) -> Self {
         let keys = match obj.get_own_property_names(
             scope,
             v8::GetPropertyNamesArgsBuilder::new()
                 .key_conversion(v8::KeyConversionMode::ConvertToString)
                 .build(),
         ) {
-            Some(keys) => SeqAccess::new(keys.into(), scope, 0..keys.length()),
-            None => SeqAccess::new(obj, scope, 0..0),
+            Some(keys) => SeqAccess::new(keys.into(), scope, 0..keys.length(), depth),
+            None => SeqAccess::new(obj, scope, 0..0, depth),
         };
 
         Self {
             obj,
             keys,
             next_value: None,
+            depth,
         }
     }
 }
@@ -504,7 +559,7 @@ impl<'de> de::MapAccess<'de> for MapObjectAccess<'_, '_, '_> {
                 continue;
             }
             self.next_value = Some(v8_val);
-            let mut deserializer = Deserializer::new(self.keys.scope, key.v8_value, None);
+            let mut deserializer = Deserializer::inside(self.keys.scope, key.v8_value, self.depth);
             return seed.deserialize(&mut deserializer).map(Some);
         }
         Ok(None)
@@ -515,7 +570,7 @@ impl<'de> de::MapAccess<'de> for MapObjectAccess<'_, '_, '_> {
             .next_value
             .take()
             .expect("Call next_key_seed before next_value_seed");
-        let mut deserializer = Deserializer::new(self.keys.scope, v8_val, None);
+        let mut deserializer = Deserializer::inside(self.keys.scope, v8_val, self.depth);
         seed.deserialize(&mut deserializer)
     }
 
@@ -529,6 +584,7 @@ struct MapPairsAccess<'a, 's, 'i> {
     pos: u32,
     len: u32,
     scope: &'a mut v8::PinScope<'s, 'i>,
+    depth: u32,
 }
 
 impl<'de> de::MapAccess<'de> for MapPairsAccess<'_, '_, '_> {
@@ -538,7 +594,7 @@ impl<'de> de::MapAccess<'de> for MapPairsAccess<'_, '_, '_> {
         if self.pos < self.len {
             let v8_key = self.obj.get_index(self.scope, self.pos).unwrap();
             self.pos += 1;
-            let mut deserializer = Deserializer::new(self.scope, v8_key, None);
+            let mut deserializer = Deserializer::inside(self.scope, v8_key, self.depth);
             let k = seed.deserialize(&mut deserializer)?;
             Ok(Some(k))
         } else {
@@ -550,7 +606,7 @@ impl<'de> de::MapAccess<'de> for MapPairsAccess<'_, '_, '_> {
         debug_assert!(self.pos < self.len);
         let v8_val = self.obj.get_index(self.scope, self.pos).unwrap();
         self.pos += 1;
-        let mut deserializer = Deserializer::new(self.scope, v8_val, None);
+        let mut deserializer = Deserializer::inside(self.scope, v8_val, self.depth);
         seed.deserialize(&mut deserializer)
     }
 
@@ -564,6 +620,7 @@ struct StructAccess<'a, 's, 'i> {
     scope: &'a mut v8::PinScope<'s, 'i>,
     keys: std::slice::Iter<'static, &'static str>,
     next_value: Option<v8::Local<'s, v8::Value>>,
+    depth: u32,
 }
 
 impl<'de> de::MapAccess<'de> for StructAccess<'_, '_, '_> {
@@ -581,7 +638,7 @@ impl<'de> de::MapAccess<'de> for StructAccess<'_, '_, '_> {
                 continue;
             }
             self.next_value = Some(val);
-            let mut deserializer = Deserializer::new(self.scope, key, None);
+            let mut deserializer = Deserializer::inside(self.scope, key, self.depth);
             return seed.deserialize(&mut deserializer).map(Some);
         }
         Ok(None)
@@ -595,7 +652,7 @@ impl<'de> de::MapAccess<'de> for StructAccess<'_, '_, '_> {
             .next_value
             .take()
             .expect("Call next_key_seed before next_value_seed");
-        let mut deserializer = Deserializer::new(self.scope, val, None);
+        let mut deserializer = Deserializer::inside(self.scope, val, self.depth);
         seed.deserialize(&mut deserializer)
     }
 }
@@ -604,6 +661,7 @@ struct SeqAccess<'a, 's, 'i> {
     obj: v8::Local<'a, v8::Object>,
     scope: &'a mut v8::PinScope<'s, 'i>,
     range: std::ops::Range<u32>,
+    depth: u32,
 }
 
 impl<'a, 's, 'i> SeqAccess<'a, 's, 'i> {
@@ -611,8 +669,14 @@ impl<'a, 's, 'i> SeqAccess<'a, 's, 'i> {
         obj: v8::Local<'a, v8::Object>,
         scope: &'a mut v8::PinScope<'s, 'i>,
         range: std::ops::Range<u32>,
+        depth: u32,
     ) -> Self {
-        Self { obj, scope, range }
+        Self {
+            obj,
+            scope,
+            range,
+            depth,
+        }
     }
 }
 
@@ -626,7 +690,7 @@ impl<'de> de::SeqAccess<'de> for SeqAccess<'_, '_, '_> {
         if let Some(pos) = self.range.next() {
             // fixme: this unwrap  is not safe because of proxies
             let val = self.obj.get_index(self.scope, pos).unwrap();
-            let mut deserializer = Deserializer::new(self.scope, val, None);
+            let mut deserializer = Deserializer::inside(self.scope, val, self.depth);
             seed.deserialize(&mut deserializer).map(Some)
         } else {
             Ok(None)
@@ -642,7 +706,7 @@ struct EnumAccess<'b, 's, 'i> {
     tag: v8::Local<'s, v8::Value>,
     payload: v8::Local<'s, v8::Value>,
     scope: &'b mut v8::PinScope<'s, 'i>,
-    // p1: std::marker::PhantomData<&'x ()>,
+    depth: u32,
 }
 
 impl<'de, 'b, 's, 'i> de::EnumAccess<'de> for EnumAccess<'b, 's, 'i> {
@@ -654,12 +718,13 @@ impl<'de, 'b, 's, 'i> de::EnumAccess<'de> for EnumAccess<'b, 's, 'i> {
         seed: V,
     ) -> Result<(V::Value, Self::Variant)> {
         let seed = {
-            let mut dtag = Deserializer::new(self.scope, self.tag, None);
+            let mut dtag = Deserializer::inside(self.scope, self.tag, self.depth);
             seed.deserialize(&mut dtag)
         };
         let dpayload = VariantDeserializer::<'b, 's, 'i> {
             scope: self.scope,
             value: self.payload,
+            depth: self.depth,
         };
 
         Ok((seed?, dpayload))
@@ -669,23 +734,24 @@ impl<'de, 'b, 's, 'i> de::EnumAccess<'de> for EnumAccess<'b, 's, 'i> {
 struct VariantDeserializer<'b, 's, 'i> {
     value: v8::Local<'s, v8::Value>,
     scope: &'b mut v8::PinScope<'s, 'i>,
+    depth: u32,
 }
 
 impl<'de> de::VariantAccess<'de> for VariantDeserializer<'_, '_, '_> {
     type Error = Error;
 
     fn unit_variant(self) -> Result<()> {
-        let mut d = Deserializer::new(self.scope, self.value, None);
+        let mut d = Deserializer::inside(self.scope, self.value, self.depth);
         de::Deserialize::deserialize(&mut d)
     }
 
     fn newtype_variant_seed<T: de::DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value> {
-        let mut d = Deserializer::new(self.scope, self.value, None);
+        let mut d = Deserializer::inside(self.scope, self.value, self.depth);
         seed.deserialize(&mut d)
     }
 
     fn tuple_variant<V: de::Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value> {
-        let mut d = Deserializer::new(self.scope, self.value, None);
+        let mut d = Deserializer::inside(self.scope, self.value, self.depth);
         de::Deserializer::deserialize_tuple(&mut d, len, visitor)
     }
 
@@ -694,7 +760,7 @@ impl<'de> de::VariantAccess<'de> for VariantDeserializer<'_, '_, '_> {
         fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value> {
-        let mut d = Deserializer::new(self.scope, self.value, None);
+        let mut d = Deserializer::inside(self.scope, self.value, self.depth);
         de::Deserializer::deserialize_struct(&mut d, "", fields, visitor)
     }
 }

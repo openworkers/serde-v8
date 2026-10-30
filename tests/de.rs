@@ -616,3 +616,99 @@ detest!(
     "-170141183460469231731687303715884105728n",
     num_bigint::BigInt::from(-170141183460469231731687303715884105728i128).into()
 );
+
+// A cycle, or a chain built to be deep, ends in an error: without a limit the
+// decoder recursed until the stack overflowed and the process aborted.
+
+/// `n` arrays nested one in the other, around a number
+fn nested_arrays(n: u32) -> String {
+    format!("(() => {{ let v = 1; for (let i = 0; i < {n}; i++) v = [v]; return v; }})()")
+}
+
+fn is_depth_limit<T: std::fmt::Debug>(result: &Result<T, Error>) -> bool {
+    matches!(result, Err(Error::DepthLimit(128)))
+}
+
+#[test]
+fn de_circular_object_is_a_depth_error() {
+    dedo(
+        "(() => { const a = {}; a.self = a; return a; })()",
+        |scope, v| {
+            let result = serde_v8::from_v8::<serde_json::Value>(scope, v);
+
+            assert!(is_depth_limit(&result), "{result:?}");
+        },
+    );
+}
+
+#[test]
+fn de_circular_array_is_a_depth_error() {
+    dedo(
+        "(() => { const a = []; a.push(a); return a; })()",
+        |scope, v| {
+            let result = serde_v8::from_v8::<serde_json::Value>(scope, v);
+
+            assert!(is_depth_limit(&result), "{result:?}");
+        },
+    );
+}
+
+#[test]
+fn de_circular_map_is_a_depth_error() {
+    dedo(
+        "(() => { const m = new Map(); m.set('self', m); return m; })()",
+        |scope, v| {
+            let result = serde_v8::from_v8::<serde_json::Value>(scope, v);
+
+            assert!(is_depth_limit(&result), "{result:?}");
+        },
+    );
+}
+
+#[test]
+fn de_circular_struct_is_a_depth_error() {
+    #[derive(Debug, Deserialize)]
+    struct Node {
+        #[allow(dead_code)]
+        next: Option<Box<Node>>,
+    }
+
+    dedo(
+        "(() => { const a = {}; a.next = a; return a; })()",
+        |scope, v| {
+            let result = serde_v8::from_v8::<Node>(scope, v);
+
+            assert!(is_depth_limit(&result), "{result:?}");
+        },
+    );
+}
+
+#[test]
+fn de_nesting_up_to_the_limit_decodes() {
+    dedo(&nested_arrays(128), |scope, v| {
+        let result = serde_v8::from_v8::<serde_json::Value>(scope, v);
+
+        assert!(result.is_ok(), "{result:?}");
+    });
+}
+
+#[test]
+fn de_nesting_past_the_limit_is_a_depth_error() {
+    dedo(&nested_arrays(129), |scope, v| {
+        let result = serde_v8::from_v8::<serde_json::Value>(scope, v);
+
+        assert!(is_depth_limit(&result), "{result:?}");
+    });
+}
+
+#[test]
+fn de_siblings_do_not_add_up_to_depth() {
+    dedo(
+        "(() => { const leaf = [1]; return Array.from({ length: 1000 }, () => leaf); })()",
+        |scope, v| {
+            let result = serde_v8::from_v8::<serde_json::Value>(scope, v);
+
+            assert!(result.is_ok(), "{result:?}");
+        },
+    );
+}

@@ -54,6 +54,9 @@ pub enum Error {
     #[error("serde_v8 error: unsupported type")]
     UnsupportedType,
 
+    #[error("serde_v8 error: nesting is deeper than {0} levels")]
+    DepthLimit(u32),
+
     #[error("serde_v8 error: length mismatch, got: {0}, expected: {1}")]
     LengthMismatch(usize, usize),
 
